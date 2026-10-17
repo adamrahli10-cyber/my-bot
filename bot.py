@@ -319,7 +319,7 @@ def main_menu():
     kb = [
         [InlineKeyboardButton("🤖 أنواع البوتات", callback_data="types")],
         [InlineKeyboardButton("🔗 شارك البوت", callback_data="share")],
-        [@RAHLI_1("👑 المالك", callback_data="owner")],
+        [InlineKeyboardButton("@RAHLI_1 👑 المالك", callback_data="owner")],
         [InlineKeyboardButton("📊 إحصائياتي", callback_data="stats")],
     ]
     return InlineKeyboardMarkup(kb)
