@@ -13,7 +13,7 @@ from telegram.ext import (
     ContextTypes, MessageHandler, filters
 )
 
-# ========== الإعدادات ==========
+# ========== الإعدادات الأساسية لبوتك ==========
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
@@ -24,10 +24,38 @@ DB_FILE = "users.json"
 DEVELOPER = "@RAHLI_1"
 BOT_NAME = "صانع البوتات"
 
+# قنواتك التي ستفرض على الزبائن
 CHANNELS = [
     {"id": "@eco_store_2", "name": "قناتي الرسمية", "url": "https://t.me/eco_store_2"},
     {"id": "@RAHLI_120", "name": "مجموعتي الرسمية", "url": "https://t.me/RAHLI_120"},
 ]
+
+# ========== شرح التشغيل للمبتدئين ==========
+INSTRUCTIONS_TEXT = """
+📚 *دليل المبتدئين: كيف تجعل بوتك يعمل؟*
+
+أهلاً بك! لقد حصلت على كود بوتك (تطوير المالك: @RAHLI_1). اتبع هذه الخطوات بالضبط:
+
+*الخطوة 1: تحميل تطبيق Pydroid 3*
+1. اذهب إلى متجر Google Play.
+2. ابحث عن تطبيق *Pydroid 3* وقم بتثبيته.
+
+*الخطوة 2: الحصول على التوكن*
+1. اذهب إلى بوت @BotFather في تلغرام.
+2. أرسل له الأمر /newbot.
+3. اختر اسماً ومعرفاً لبوتك.
+4. سيعطيك BotFather رسالة فيها *Token* (كود طويل). انسخه.
+
+*الخطوة 3: تشغيل البوت*
+1. افتح تطبيق Pydroid 3.
+2. افتح الملف الذي أرسلته لك (بوت_أزرار.py).
+3. ابحث عن السطر: `TOKEN = "ضع_توكن_بوتك_هنا"`.
+4. ضع التوكن الذي نسخته مكان الكلمة العربية (بين علامات التنصيص).
+5. اضغط على زر التشغيل (الزر الأصفر ▶️).
+6. مبروك! اذهب إلى بوتك في تلغرام واضغط /start.
+
+⚠️ *ملاحظة هامة:* هذا البوت مبرمج ليطلب من المستخدمين الاشتراك في قنوات المالك @RAHLI_1 أولاً.
+"""
 
 # ========== قاعدة بيانات ==========
 def load_db():
@@ -40,7 +68,7 @@ def save_db(db):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(db, f, ensure_ascii=False, indent=2)
 
-# ========== التحقق من الاشتراك ==========
+# ========== التحقق من الاشتراك (للبوت الرئيسي) ==========
 async def check_subscription(user_id, bot):
     not_subscribed = []
     for ch in CHANNELS:
@@ -60,32 +88,79 @@ def subscribe_keyboard(not_subscribed):
     kb.append([InlineKeyboardButton("✅ تحققت من الاشتراك", callback_data="check_sub")])
     return InlineKeyboardMarkup(kb)
 
-# ========== القوالب ==========
+# ========== القوالب (البوتات التي تُرسل للزبائن) ==========
 TEMPLATES = {}
 
+# هنا السر: هذا الكود هو ما سيحصل عليه الزبون. لقد وضعنا فيه اسمك وقنواتك.
 TEMPLATES["buttons"] = {
     "name": "🔘 بوت أزرار",
     "desc": "بوت بقوائم أزرار تفاعلية.",
     "code": '''#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+
 logging.basicConfig(level=logging.INFO)
+# الزبون سيضع توكنه هنا
 TOKEN = "ضع_توكن_بوتك_هنا"
+
+# معلومات المالك الأساسي (أنت)
+ORIGINAL_OWNER = "@RAHLI_1"
+FORCED_CHANNELS = ["@eco_store_2", "@RAHLI_120"]
+
+# دالة إجبار المستخدمين على الاشتراك في قنواتك
+async def check_forced_sub(update, ctx):
+    user_id = update.effective_user.id
+    not_sub = []
+    for ch in FORCED_CHANNELS:
+        try:
+            m = await ctx.bot.get_chat_member(ch, user_id)
+            if m.status in ["left", "kicked"]:
+                not_sub.append(ch)
+        except Exception:
+            not_sub.append(ch)
+            
+    if not_sub:
+        kb = [[InlineKeyboardButton(f"📢 اشترك هنا", url=f"https://t.me/{ch.replace('@','')}")] for ch in not_sub]
+        kb.append([InlineKeyboardButton("✅ تحققت", callback_data="check_sub")])
+        text = f"⚠️ *يجب عليك الاشتراك في قنوات المالك {ORIGINAL_OWNER} أولاً:*"
+        if update.callback_query:
+            await update.callback_query.answer("اشترك أولاً!", show_alert=True)
+        else:
+            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        return False
+    return True
+
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    kb = [[InlineKeyboardButton("زر 1", callback_data="b1")],[InlineKeyboardButton("زر 2", callback_data="b2")]]
-    await update.message.reply_text("اختر:", reply_markup=InlineKeyboardMarkup(kb))
-async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer(); await q.edit_message_text(f"ضغطت: {q.data}")
+    if not await check_forced_sub(update, ctx): return
+    kb = [
+        [InlineKeyboardButton("زر 1", callback_data="b1")],
+        [InlineKeyboardButton("زر 2", callback_data="b2")],
+        [InlineKeyboardButton(f"👑 المالك الأساسي: {ORIGINAL_OWNER}", callback_data="none")]
+    ]
+    await update.message.reply_text("أهلاً بك في بوت الأزرار:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    if q.data == "check_sub":
+        if await check_forced_sub(update, ctx):
+            await start(update, ctx)
+        return
+    if q.data == "none": return
+    await q.edit_message_text(f"ضغطت على: {q.data}")
+
 def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(btn))
+    app.add_handler(CallbackQueryHandler(button))
     app.run_polling()
 if __name__ == "__main__": main()
 '''
 }
 
+# باقي القوالب (يمكنك إضافة نفس الحماية لها لاحقاً بنفس الطريقة)
 TEMPLATES["translate"] = {
     "name": "🌐 بوت ترجمة",
     "desc": "يترجم النصوص.",
@@ -94,7 +169,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 TOKEN = "ضع_توكن_بوتك_هنا"
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أرسل أي نص وسأترجمه.")
+    await update.message.reply_text("أرسل أي نص وسأترجمه. (تطوير @RAHLI_1)")
 async def tr(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     t = update.message.text
     await update.message.reply_text(f"🌐 https://translate.google.com/?text={t}")
@@ -102,40 +177,6 @@ def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, tr))
-    app.run_polling()
-if __name__ == "__main__": main()
-'''
-}
-
-TEMPLATES["quiz"] = {
-    "name": "🎯 بوت مسابقات",
-    "desc": "أسئلة وأجوبة.",
-    "code": '''#!/usr/bin/env python3
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-TOKEN = "ضع_توكن_بوتك_هنا"
-Q = [{"q":"عاصمة المغرب؟","o":["الرباط","فاس"],"a":"الرباط"}]
-scores = {}
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    scores[update.effective_user.id] = 0
-    await ask(update, 0)
-async def ask(update, i):
-    if i >= len(Q):
-        await update.effective_message.reply_text(f"النقاط: {scores[update.effective_user.id]}")
-        return
-    kb = [[InlineKeyboardButton(o, callback_data=f"{i}_{o}")] for o in Q[i]["o"]]
-    await update.effective_message.reply_text(Q[i]["q"], reply_markup=InlineKeyboardMarkup(kb))
-async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    i = int(q.data.split("_")[0]); a = q.data.split("_",1)[1]
-    if a == Q[i]["a"]:
-        scores[q.from_user.id] += 1; await q.edit_message_text("✅ صحيح")
-    else: await q.edit_message_text(f"❌ الجواب: {Q[i]['a']}")
-    await ask(update, i+1)
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(btn))
     app.run_polling()
 if __name__ == "__main__": main()
 '''
@@ -149,7 +190,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 TOKEN = "ضع_توكن_بوتك_هنا"
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أرسل عملية مثل: 5+3*2")
+    await update.message.reply_text("أرسل عملية مثل: 5+3*2 (تطوير @RAHLI_1)")
 async def c(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     t = update.message.text
     try:
@@ -165,161 +206,12 @@ if __name__ == "__main__": main()
 '''
 }
 
-TEMPLATES["age"] = {
-    "name": "🎂 حساب العمر",
-    "desc": "يحسب عمرك.",
-    "code": '''#!/usr/bin/env python3
-from datetime import datetime
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-TOKEN = "ضع_توكن_بوتك_هنا"
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أرسل تاريخ ميلادك YYYY-MM-DD")
-async def a(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    try:
-        b = datetime.strptime(update.message.text.strip(), "%Y-%m-%d"); t = datetime.now()
-        y = t.year - b.year - ((t.month, t.day) < (b.month, b.day))
-        await update.message.reply_text(f"عمرك: {y} سنة")
-    except: await update.message.reply_text("صيغة خاطئة")
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, a))
-    app.run_polling()
-if __name__ == "__main__": main()
-'''
-}
-
-TEMPLATES["welcome"] = {
-    "name": "👋 بوت ترحيب",
-    "desc": "يرحب بالأعضاء.",
-    "code": '''#!/usr/bin/env python3
-from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
-TOKEN = "ضع_توكن_بوتك_هنا"
-async def w(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    for m in update.message.new_chat_members:
-        await update.message.reply_text(f"أهلاً {m.full_name} 🎉")
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, w))
-    app.run_polling()
-if __name__ == "__main__": main()
-'''
-}
-
-TEMPLATES["broadcast"] = {
-    "name": "📢 بوت إعلانات",
-    "desc": "إرسال جماعي للمشتركين.",
-    "code": '''#!/usr/bin/env python3
-import json, os
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
-TOKEN = "ضع_توكن_بوتك_هنا"
-ADMIN_ID = 0
-DB = "subs.json"
-def l(): return json.load(open(DB)) if os.path.exists(DB) else []
-def s(d): json.dump(d, open(DB,"w"))
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    subs = l()
-    if update.effective_user.id not in subs: subs.append(update.effective_user.id); s(subs)
-    await update.message.reply_text("تم الاشتراك.")
-async def b(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    msg = " ".join(ctx.args)
-    for u in l():
-        try: await ctx.bot.send_message(u, msg)
-        except: pass
-    await update.message.reply_text("تم.")
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("broadcast", b))
-    app.run_polling()
-if __name__ == "__main__": main()
-'''
-}
-
-TEMPLATES["zakhrafa"] = {
-    "name": "بوت زخرفة",
-    "desc": "يزخرف الأسماء.",
-    "code": '''#!/usr/bin/env python3
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-TOKEN = "ضع_توكن_بوتك_هنا"
-D = {"a":"α","b":"в","c":"¢","d":"∂","e":"є","f":"ƒ","g":"g","h":"н","i":"ι","j":"נ","k":"к","l":"ℓ","m":"м","n":"η","o":"σ","p":"ρ","q":"q","r":"я","s":"ѕ","t":"т","u":"υ","v":"ν","w":"ω","x":"χ","y":"у","z":"z"}
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أرسل اسمك.")
-async def z(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    t = update.message.text.lower(); await update.message.reply_text("".join(D.get(c,c) for c in t))
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, z))
-    app.run_polling()
-if __name__ == "__main__": main()
-'''
-}
-
-TEMPLATES["pdf"] = {
-    "name": "📄 صور → PDF",
-    "desc": "يحوّل الصور إلى PDF.",
-    "code": '''#!/usr/bin/env python3
-import io
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from PIL import Image
-TOKEN = "ضع_توكن_بوتك_هنا"
-imgs = {}
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أرسل الصور ثم /done")
-async def c(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user.id; imgs.setdefault(u, [])
-    p = update.message.photo[-1]; f = await p.get_file(); b = await f.download_as_bytearray()
-    imgs[u].append(Image.open(io.BytesIO(b)).convert("RGB"))
-    await update.message.reply_text(f"عدد الصور: {len(imgs[u])}")
-async def d(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user.id
-    if not imgs.get(u): await update.message.reply_text("لا صور."); return
-    buf = io.BytesIO(); imgs[u][0].save(buf, "PDF", save_all=True, append_images=imgs[u][1:]); buf.seek(0)
-    await update.message.reply_document(buf, filename="out.pdf"); imgs[u] = []
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("done", d))
-    app.add_handler(MessageHandler(filters.PHOTO, c))
-    app.run_polling()
-if __name__ == "__main__": main()
-'''
-}
-
-TEMPLATES["music"] = {
-    "name": "🎵 بوت موسيقى",
-    "desc": "يبحث عن أغاني يوتيوب.",
-    "code": '''#!/usr/bin/env python3
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-TOKEN = "ضع_توكن_بوتك_هنا"
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أرسل اسم الأغنية.")
-async def s(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.message.text.replace(" ","+")
-    await update.message.reply_text(f"🎵 https://www.youtube.com/results?search_query={q}")
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, s))
-    app.run_polling()
-if __name__ == "__main__": main()
-'''
-}
-
 # ========== القوائم ==========
 def main_menu():
     kb = [
         [InlineKeyboardButton("🤖 أنواع البوتات", callback_data="types")],
         [InlineKeyboardButton("🔗 شارك البوت", callback_data="share")],
-        [InlineKeyboardButton("@RAHLI_1 👑 المالك", callback_data="owner")],
+        [InlineKeyboardButton(f"{DEVELOPER} 👑 المالك", callback_data="owner")],
         [InlineKeyboardButton("📊 إحصائياتي", callback_data="stats")],
     ]
     return InlineKeyboardMarkup(kb)
@@ -369,7 +261,6 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_menu()
     )
 
-# ========== معالج الأزرار ==========
 async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -404,25 +295,28 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         tpl = TEMPLATES.get(key)
         if not tpl:
             return
+        
         await q.edit_message_text(
-            f"*{tpl['name']}*\n\n{tpl['desc']}\n\n📥 جاري الإرسال...",
+            f"*{tpl['name']}*\n\n{tpl['desc']}\n\n📥 جاري إرسال الملف...",
             parse_mode="Markdown"
         )
+        
         f = InputFile(io.BytesIO(tpl["code"].encode("utf-8")), filename=f"{key}_bot.py")
         await ctx.bot.send_document(
             chat_id=q.from_user.id,
             document=f,
-            caption=f"✅ {tpl['name']}\n\n"
-                    "📌 *خطوات التشغيل:*\n"
-                    "1. افتح @BotFather وأنشئ بوتاً جديداً\n"
-                    "2. انسخ التوكن\n"
-                    "3. افتح الملف وضع التوكن مكان `ضع_توكن_بوتك_هنا`\n"
-                    "4. شغّله بـ: `python3 {key}_bot.py`",
-            parse_mode="Markdown"
+            caption=f"✅ هذا هو كود بوت {tpl['name']} الخاص بك. (تطوير: {DEVELOPER})"
         )
+        
         await ctx.bot.send_message(
             chat_id=q.from_user.id,
-            text="اختر نوعاً آخر:",
+            text=INSTRUCTIONS_TEXT,
+            parse_mode="Markdown"
+        )
+        
+        await ctx.bot.send_message(
+            chat_id=q.from_user.id,
+            text="اختر نوعاً آخر أو اضغط رجوع:",
             reply_markup=types_menu()
         )
 
@@ -460,7 +354,6 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "back":
         await q.edit_message_text("القائمة الرئيسية:", reply_markup=main_menu())
 
-# ========== معالج الرسائل ==========
 async def msg_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     not_sub = await check_subscription(update.effective_user.id, ctx.bot)
     if not_sub:
@@ -471,14 +364,13 @@ async def msg_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("استخدم /start للبدء.")
 
-# ========== التشغيل ==========
 def main():
     print("=" * 50)
     print(f"🤖 {BOT_NAME}")
     print(f"👑 المالك: {DEVELOPER}")
     print("=" * 50)
-    import os
-token = os.environ.get("BOT_TOKEN", "").strip()
+    
+    token = os.environ.get("BOT_TOKEN", "").strip()
     if not token:
         print("❌ لا يوجد توكن.")
         return
