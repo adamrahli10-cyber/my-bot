@@ -1,387 +1,249 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import io
-import json
-import logging
 import os
-from datetime import datetime
+import re
+import asyncio
+import tempfile
+import logging
+from pathlib import Path
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram import Update
+from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    ContextTypes, MessageHandler, filters
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
 )
+import yt_dlp
 
-# ========== الإعدادات الأساسية لبوتك ==========
+# ============================================================
+# 1. الإعدادات الأساسية
+# ============================================================
+
+# ⚠️ ضع التوكن الخاص بك هنا
+BOT_TOKEN = "8914214210:AAFn_9caVKbHiQb9-AajsRf8NBVJADpLnHU"
+
+# أسماء المالكين
+OWNER_1 = "@RAHLI_1"
+OWNER_2 = "@TV_19_VPI"
+
+# ------------------------------------------------------------
+# رسالة التنبيه وإخلاء المسؤولية
+# ------------------------------------------------------------
+WARNING_MESSAGE = """⚠️ <b>تنبيه وإخلاء مسؤولية:</b>
+
+أهلاً بك! صُمم هذا البوت لتسهيل حفظ وتحميل المحتوى المباح والنافع.
+
+نرجو تذكر قول الله تعالى:
+﴿ مَا يَلْفِظُ مِنْ قَوْلٍ إِلَّا لَدَيْهِ رَقِيبٌ عَتِيدٌ ﴾
+
+نبرأ إلى الله من استخدام هذا البوت في تحميل ما حرّم الله (كالمقاطع المحرمة والمنكرات)، أو انتهاك حقوق الملكية الفكرية للآخرين بغير حق.
+
+<b>المستخدم وحده يتحمل المسؤولية كاملة أمام الله عن طبيعة استخدامه.</b>
+
+---
+👤 <b>المالكين:</b> {owner1} و {owner2}
+"""
+
+# المنصات المدعومة فقط
+SUPPORTED_DOMAINS = {
+    "youtube.com": "يوتيوب",
+    "youtu.be": "يوتيوب",
+    "tiktok.com": "تيك توك",
+    "vm.tiktok.com": "تيك توك",
+    "facebook.com": "فيسبوك",
+    "fb.watch": "فيسبوك",
+    "instagram.com": "إنستغرام",
+}
+
+# الحد الأقصى لحجم الملف
+MAX_FILE_SIZE_MB = 50
+
+# مجلد مؤقت للتحميلات
+TEMP_DIR = Path(tempfile.gettempdir()) / "tg_downloader_bot"
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-DB_FILE = "users.json"
-DEVELOPER = "@RAHLI_1"
-BOT_NAME = "صانع البوتات"
+# ============================================================
+# 2. دوال مساعدة
+# ============================================================
 
-# قنواتك التي ستفرض على الزبائن
-CHANNELS = [
-    {"id": "@eco_store_2", "name": "قناتي الرسمية", "url": "https://t.me/eco_store_2"},
-    {"id": "@RAHLI_120", "name": "مجموعتي الرسمية", "url": "https://t.me/RAHLI_120"},
-]
+def extract_domain(url: str):
+    url = url.strip()
+    match = re.match(r"^(?:https?://)?(?:www\.)?([^/]+)", url, re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).lower().split(":")[0]
 
-# ========== شرح التشغيل للمبتدئين ==========
-INSTRUCTIONS_TEXT = """
-📚 *دليل المبتدئين: كيف تجعل بوتك يعمل؟*
+def is_supported_url(url: str):
+    domain = extract_domain(url)
+    if not domain:
+        return False, None
+    if domain in SUPPORTED_DOMAINS:
+        return True, SUPPORTED_DOMAINS[domain]
+    for supported_domain, platform_name in SUPPORTED_DOMAINS.items():
+        if domain.endswith("." + supported_domain):
+            return True, platform_name
+    return False, None
 
-أهلاً بك! لقد حصلت على كود بوتك (تطوير المالك: @RAHLI_1). اتبع هذه الخطوات بالضبط:
+def download_video(url: str, output_dir: Path):
+    ydl_opts = {
+        "outtmpl": str(output_dir / "%(title).100s_%(id)s.%(ext)s"),
+        "format": "best[ext=mp4]/best", 
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "max_filesize": MAX_FILE_SIZE_MB * 1024 * 1024,
+        "extractor_args": {"youtube": {"player_client": ["tv", "mweb", "android"]}},
+    }
 
-*الخطوة 1: تحميل تطبيق Pydroid 3*
-1. اذهب إلى متجر Google Play.
-2. ابحث عن تطبيق *Pydroid 3* وقم بتثبيته.
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        file_path = Path(ydl.prepare_filename(info))
+        
+        if not file_path.exists():
+            files = sorted(output_dir.glob("*"), key=os.path.getmtime, reverse=True)
+            if files:
+                file_path = files[0]
+            else:
+                raise FileNotFoundError("لم يتم العثور على الملف بعد التحميل.")
+        return file_path, info
 
-*الخطوة 2: الحصول على التوكن*
-1. اذهب إلى بوت @BotFather في تلغرام.
-2. أرسل له الأمر /newbot.
-3. اختر اسماً ومعرفاً لبوتك.
-4. سيعطيك BotFather رسالة فيها *Token* (كود طويل). انسخه.
-
-*الخطوة 3: تشغيل البوت*
-1. افتح تطبيق Pydroid 3.
-2. افتح الملف الذي أرسلته لك (بوت_أزرار.py).
-3. ابحث عن السطر: `TOKEN = "ضع_توكن_بوتك_هنا"`.
-4. ضع التوكن الذي نسخته مكان الكلمة العربية (بين علامات التنصيص).
-5. اضغط على زر التشغيل (الزر الأصفر ▶️).
-6. مبروك! اذهب إلى بوتك في تلغرام واضغط /start.
-
-⚠️ *ملاحظة هامة:* هذا البوت مبرمج ليطلب من المستخدمين الاشتراك في قنوات المالك @RAHLI_1 أولاً.
-"""
-
-# ========== قاعدة بيانات ==========
-def load_db():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-def save_db(db):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(db, f, ensure_ascii=False, indent=2)
-
-# ========== التحقق من الاشتراك (للبوت الرئيسي) ==========
-async def check_subscription(user_id, bot):
-    not_subscribed = []
-    for ch in CHANNELS:
-        try:
-            member = await bot.get_chat_member(chat_id=ch["id"], user_id=user_id)
-            if member.status in ["left", "kicked"]:
-                not_subscribed.append(ch)
-        except Exception as e:
-            logger.warning(f"خطأ في التحقق من {ch['id']}: {e}")
-            not_subscribed.append(ch)
-    return not_subscribed
-
-def subscribe_keyboard(not_subscribed):
-    kb = []
-    for ch in not_subscribed:
-        kb.append([InlineKeyboardButton(f"📢 {ch['name']}", url=ch["url"])])
-    kb.append([InlineKeyboardButton("✅ تحققت من الاشتراك", callback_data="check_sub")])
-    return InlineKeyboardMarkup(kb)
-
-# ========== القوالب (البوتات التي تُرسل للزبائن) ==========
-TEMPLATES = {}
-
-# هنا السر: هذا الكود هو ما سيحصل عليه الزبون. لقد وضعنا فيه اسمك وقنواتك.
-TEMPLATES["buttons"] = {
-    "name": "🔘 بوت أزرار",
-    "desc": "بوت بقوائم أزرار تفاعلية.",
-    "code": '''#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-
-logging.basicConfig(level=logging.INFO)
-# الزبون سيضع توكنه هنا
-TOKEN = "ضع_توكن_بوتك_هنا"
-
-# معلومات المالك الأساسي (أنت)
-ORIGINAL_OWNER = "@RAHLI_1"
-FORCED_CHANNELS = ["@eco_store_2", "@RAHLI_120"]
-
-# دالة إجبار المستخدمين على الاشتراك في قنواتك
-async def check_forced_sub(update, ctx):
-    user_id = update.effective_user.id
-    not_sub = []
-    for ch in FORCED_CHANNELS:
-        try:
-            m = await ctx.bot.get_chat_member(ch, user_id)
-            if m.status in ["left", "kicked"]:
-                not_sub.append(ch)
-        except Exception:
-            not_sub.append(ch)
-            
-    if not_sub:
-        kb = [[InlineKeyboardButton(f"📢 اشترك هنا", url=f"https://t.me/{ch.replace('@','')}")] for ch in not_sub]
-        kb.append([InlineKeyboardButton("✅ تحققت", callback_data="check_sub")])
-        text = f"⚠️ *يجب عليك الاشتراك في قنوات المالك {ORIGINAL_OWNER} أولاً:*"
-        if update.callback_query:
-            await update.callback_query.answer("اشترك أولاً!", show_alert=True)
-        else:
-            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-        return False
-    return True
-
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not await check_forced_sub(update, ctx): return
-    kb = [
-        [InlineKeyboardButton("زر 1", callback_data="b1")],
-        [InlineKeyboardButton("زر 2", callback_data="b2")],
-        [InlineKeyboardButton(f"👑 المالك الأساسي: {ORIGINAL_OWNER}", callback_data="none")]
-    ]
-    await update.message.reply_text("أهلاً بك في بوت الأزرار:", reply_markup=InlineKeyboardMarkup(kb))
-
-async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    if q.data == "check_sub":
-        if await check_forced_sub(update, ctx):
-            await start(update, ctx)
-        return
-    if q.data == "none": return
-    await q.edit_message_text(f"ضغطت على: {q.data}")
-
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button))
-    app.run_polling()
-if __name__ == "__main__": main()
-'''
-}
-
-# باقي القوالب (يمكنك إضافة نفس الحماية لها لاحقاً بنفس الطريقة)
-TEMPLATES["translate"] = {
-    "name": "🌐 بوت ترجمة",
-    "desc": "يترجم النصوص.",
-    "code": '''#!/usr/bin/env python3
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-TOKEN = "ضع_توكن_بوتك_هنا"
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أرسل أي نص وسأترجمه. (تطوير @RAHLI_1)")
-async def tr(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    t = update.message.text
-    await update.message.reply_text(f"🌐 https://translate.google.com/?text={t}")
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, tr))
-    app.run_polling()
-if __name__ == "__main__": main()
-'''
-}
-
-TEMPLATES["calc"] = {
-    "name": "🧮 بوت حاسبة",
-    "desc": "حاسبة بسيطة.",
-    "code": '''#!/usr/bin/env python3
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-TOKEN = "ضع_توكن_بوتك_هنا"
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أرسل عملية مثل: 5+3*2 (تطوير @RAHLI_1)")
-async def c(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    t = update.message.text
+async def cleanup_file(path: Path):
     try:
-        if not set(t) <= set("0123456789+-*/(). "): raise ValueError
-        await update.message.reply_text(f"= {eval(t, {'__builtins__':{}}, {})}")
-    except: await update.message.reply_text("خطأ")
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, c))
-    app.run_polling()
-if __name__ == "__main__": main()
-'''
-}
+        if path.exists():
+            await asyncio.to_thread(path.unlink)
+    except Exception as e:
+        logger.warning(f"فشل حذف الملف المؤقت {path}: {e}")
 
-# ========== القوائم ==========
-def main_menu():
-    kb = [
-        [InlineKeyboardButton("🤖 أنواع البوتات", callback_data="types")],
-        [InlineKeyboardButton("🔗 شارك البوت", callback_data="share")],
-        [InlineKeyboardButton(f"{DEVELOPER} 👑 المالك", callback_data="owner")],
-        [InlineKeyboardButton("📊 إحصائياتي", callback_data="stats")],
-    ]
-    return InlineKeyboardMarkup(kb)
+# ============================================================
+# 3. معالجات البوت
+# ============================================================
 
-def types_menu():
-    keys = list(TEMPLATES.keys())
-    kb = []
-    for i in range(0, len(keys), 2):
-        row = []
-        for k in keys[i:i+2]:
-            row.append(InlineKeyboardButton(TEMPLATES[k]["name"], callback_data=f"tpl_{k}"))
-        kb.append(row)
-    kb.append([InlineKeyboardButton("⬅ رجوع", callback_data="back")])
-    return InlineKeyboardMarkup(kb)
-
-def back_menu():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅ رجوع", callback_data="back")]])
-
-# ========== الأوامر ==========
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-
-    not_sub = await check_subscription(user.id, ctx.bot)
-    if not_sub:
-        await update.message.reply_text(
-            f"👋 أهلاً {user.full_name}\n\n"
-            "⚠️ *قبل استخدام البوت، يجب أن تشترك في:*",
-            parse_mode="Markdown",
-            reply_markup=subscribe_keyboard(not_sub)
-        )
-        return
-
-    db = load_db()
-    uid = str(user.id)
-    referrer = ctx.args[0] if ctx.args else None
-    if uid not in db:
-        db[uid] = {"name": user.full_name, "joined": datetime.now().isoformat(), "referrals": 0}
-        if referrer and referrer in db and referrer != uid:
-            db[referrer]["referrals"] = db[referrer].get("referrals", 0) + 1
-        save_db(db)
-
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    welcome_text = (
+        "🤖 <b>أهلاً بك في بوت التحميل!</b>\n\n"
+        "📥 <b>كيفية الاستخدام:</b>\n"
+        "فقط قم بإرسال رابط الفيديو هنا وسأقوم بتحميله وإرساله لك فوراً.\n"
+        "⚠️ <i>ملاحظة: الحد الأقصى لحجم الفيديو هو 50 ميجابايت.</i>\n\n"
+        "🔹 <b>المنصات المدعومة:</b>\n"
+        "1. يوتيوب (YouTube)\n"
+        "2. تيك توك (TikTok)\n"
+        "3. فيسبوك (Facebook)\n"
+        "4. إنستغرام (Instagram)\n\n"
+        "👇 <i>يرجى قراءة التنبيه التالي:</i>\n\n"
+    )
+    warning_text = WARNING_MESSAGE.format(owner1=OWNER_1, owner2=OWNER_2)
+    
     await update.message.reply_text(
-        f"👋 أهلاً {user.full_name}\n\n"
-        f"مرحباً بك في *{BOT_NAME}*.\n\n"
-        "اختر من الأزرار أدناه:",
-        parse_mode="Markdown",
-        reply_markup=main_menu()
+        welcome_text + warning_text,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
     )
 
-async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    data = q.data
+async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    url = message.text.strip()
 
-    if data == "check_sub":
-        not_sub = await check_subscription(q.from_user.id, ctx.bot)
-        if not_sub:
-            await q.answer("❌ لم تشترك بعد.", show_alert=True)
-        else:
-            await q.answer("✅ تم التحقق!", show_alert=True)
-            await q.edit_message_text(
-                f"✅ شكراً لاشتراكك!\n\nمرحباً في *{BOT_NAME}*:",
-                parse_mode="Markdown",
-                reply_markup=main_menu()
+    if not re.search(r"https?://", url, re.IGNORECASE):
+        await message.reply_text("❌ الرجاء إرسال رابط فيديو صالح.")
+        return
+
+    supported, platform_name = is_supported_url(url)
+    if not supported:
+        await message.reply_text("❌ عذراً، المنصة غير مدعومة.\nالمنصات المدعومة فقط: يوتيوب، تيك توك، فيسبوك، إنستغرام.")
+        return
+
+    processing_msg = await message.reply_text(f"⏳ جاري معالجة رابط {platform_name}...\nيرجى الانتظار.")
+    await message.chat.send_action(ChatAction.UPLOAD_VIDEO)
+
+    task_dir = TEMP_DIR / f"task_{message.message_id}_{message.from_user.id}"
+    task_dir.mkdir(exist_ok=True, parents=True)
+
+    file_path = None
+    try:
+        file_path, info = await asyncio.to_thread(download_video, url, task_dir)
+
+        file_size_mb = file_path.stat().st_size / (1024 * 1024)
+        if file_size_mb > MAX_FILE_SIZE_MB:
+            raise ValueError(f"حجم الفيديو ({file_size_mb:.1f} ميجا) يتجاوز الحد المسموح (50 ميجا).")
+
+        warning_caption = WARNING_MESSAGE.format(owner1=OWNER_1, owner2=OWNER_2)
+        if len(warning_caption) > 1000:
+            warning_caption = warning_caption[:1000] + "..."
+
+        with open(file_path, "rb") as video_file:
+            # زيادة وقت الانتظار إلى 300 ثانية (5 دقائق)
+            await message.reply_video(
+                video=video_file,
+                caption=warning_caption,
+                parse_mode=ParseMode.HTML,
+                supports_streaming=True,
+                filename=file_path.name,
+                read_timeout=300,  
+                write_timeout=300, 
+                connect_timeout=300 
             )
-        return
+        await processing_msg.delete()
 
-    not_sub = await check_subscription(q.from_user.id, ctx.bot)
-    if not_sub:
-        await q.edit_message_text(
-            "⚠️ يجب أن تشترك أولاً:",
-            reply_markup=subscribe_keyboard(not_sub)
-        )
-        return
-
-    if data == "types":
-        await q.edit_message_text("🤖 اختر نوع البوت:", reply_markup=types_menu())
-
-    elif data.startswith("tpl_"):
-        key = data[4:]
-        tpl = TEMPLATES.get(key)
-        if not tpl:
-            return
+    except yt_dlp.utils.DownloadError as e:
+        error_text = str(e).lower()
+        if "sign in" in error_text or "confirm you're not a bot" in error_text:
+            user_msg = "❌ يوتيوب يطلب تسجيل الدخول (حماية من البوتات).\nجرب إرسال الرابط مرة أخرى."
+        elif "private" in error_text:
+            user_msg = "❌ الفيديو خاص أو غير متاح للعامة."
+        else:
+            user_msg = "❌ تعذر تحميل الفيديو. قد يكون الرابط معطلاً أو المحتوى محمياً."
+        await processing_msg.edit_text(user_msg)
         
-        await q.edit_message_text(
-            f"*{tpl['name']}*\n\n{tpl['desc']}\n\n📥 جاري إرسال الملف...",
-            parse_mode="Markdown"
-        )
+    except ValueError as e:
+        await processing_msg.edit_text(f"❌ {e}")
         
-        f = InputFile(io.BytesIO(tpl["code"].encode("utf-8")), filename=f"{key}_bot.py")
-        await ctx.bot.send_document(
-            chat_id=q.from_user.id,
-            document=f,
-            caption=f"✅ هذا هو كود بوت {tpl['name']} الخاص بك. (تطوير: {DEVELOPER})"
-        )
+    except Exception as e:
+        logger.exception(f"خطأ غير متوقع: {e}")
+        await processing_msg.edit_text("❌ حدث خطأ غير متوقع (بطء في الإنترنت أثناء الرفع).")
         
-        await ctx.bot.send_message(
-            chat_id=q.from_user.id,
-            text=INSTRUCTIONS_TEXT,
-            parse_mode="Markdown"
-        )
-        
-        await ctx.bot.send_message(
-            chat_id=q.from_user.id,
-            text="اختر نوعاً آخر أو اضغط رجوع:",
-            reply_markup=types_menu()
-        )
+    finally:
+        if file_path:
+            await cleanup_file(file_path)
+        try:
+            if task_dir.exists() and not any(task_dir.iterdir()):
+                await asyncio.to_thread(task_dir.rmdir)
+        except Exception:
+            pass
 
-    elif data == "share":
-        me = await ctx.bot.get_me()
-        link = f"https://t.me/{me.username}?start={q.from_user.id}"
-        await q.edit_message_text(
-            f"🔗 *رابطك الخاص:*\n\n`{link}`\n\n"
-            "شاركه وكل من يدخل منه يُحسب في إحصائياتك.",
-            parse_mode="Markdown",
-            reply_markup=back_menu()
-        )
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(msg="حدث استثناء:", exc_info=context.error)
 
-    elif data == "owner":
-        await q.edit_message_text(
-            f"👑 *مالك البوت:*\n\n"
-            f"{DEVELOPER}\n\n"
-            "هذا البوت من تطوير وإدارة المالك الرسمي.",
-            parse_mode="Markdown",
-            reply_markup=back_menu()
-        )
-
-    elif data == "stats":
-        db = load_db()
-        uid = str(q.from_user.id)
-        d = db.get(uid, {})
-        await q.edit_message_text(
-            f"📊 إحصائياتك:\n\n"
-            f"👤 {q.from_user.full_name}\n"
-            f"👥 الإحالات: {d.get('referrals', 0)}\n"
-            f"📅 الانضمام: {d.get('joined', '')[:10]}",
-            reply_markup=back_menu()
-        )
-
-    elif data == "back":
-        await q.edit_message_text("القائمة الرئيسية:", reply_markup=main_menu())
-
-async def msg_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    not_sub = await check_subscription(update.effective_user.id, ctx.bot)
-    if not_sub:
-        await update.message.reply_text(
-            "⚠️ اشترك أولاً:",
-            reply_markup=subscribe_keyboard(not_sub)
-        )
-        return
-    await update.message.reply_text("استخدم /start للبدء.")
+# ============================================================
+# 4. تشغيل البوت
+# ============================================================
 
 def main():
-    print("=" * 50)
-    print(f"🤖 {BOT_NAME}")
-    print(f"👑 المالك: {DEVELOPER}")
-    print("=" * 50)
-    
-    token = os.environ.get("BOT_TOKEN", "").strip()
-    if not token:
-        print("❌ لا يوجد توكن.")
-        return
+    if not BOT_TOKEN or BOT_TOKEN == "ضع_التوكن_الخاص_بك_هنا":
+        raise ValueError("الرجاء تعيين BOT_TOKEN أولاً.")
 
-    app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_handler))
+    # 🔥 زيادة أوقات الانتظار إلى 5 دقائق
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .read_timeout(300)
+        .write_timeout(300)
+        .connect_timeout(300)
+        .build()
+    )
 
-    print("✅ البوت يعمل... Ctrl+C للإيقاف.")
-    app.run_polling()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
+    application.add_error_handler(error_handler)
+
+    logger.info("✅ البوت يعمل الآن...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
