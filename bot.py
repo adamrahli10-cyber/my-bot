@@ -6,12 +6,13 @@ import tempfile
 import logging
 from pathlib import Path
 
-from telegram import Update, BotCommand
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
@@ -24,7 +25,10 @@ import yt_dlp
 # ⚠️ ضع التوكن الخاص بك هنا (أو اتركه يقرأ من البيئة)
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8824872624:AAH5F6c9A0XIrCGzyLMT6wbfwOTDkM7arGc")
 
-# أسماء المالكين (يجب أن تكون مطابقة لأسمائهم في تيليجرام بالضبط)
+# ⚠️ اسم قناة الاشتراك الإجباري (يجب أن يكون البوت مشرفاً فيها)
+CHANNEL_USERNAME = "@botTelegram_0"
+
+# أسماء المالكين
 OWNER_1 = "@RAHLI_1"
 OWNER_2 = "@TV_19_VPI"
 
@@ -122,7 +126,6 @@ def update_points(user_id, amount):
     conn.commit()
     conn.close()
 
-# 🔥 دالة جديدة لجلب الإحصائيات
 def get_stats():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -134,7 +137,42 @@ def get_stats():
     return total_users, total_points
 
 # ============================================================
-# 3. دوال مساعدة للتحميل والتحقق
+# 3. دالة التحقق من الاشتراك الإجباري
+# ============================================================
+async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user_id = update.effective_user.id
+    try:
+        member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        if member.status in ['creator', 'administrator', 'member']:
+            return True
+    except Exception as e:
+        logger.error(f"خطأ في التحقق من الاشتراك (تأكد أن البوت مشرف في القناة): {e}")
+        # إذا حدث خطأ (مثلاً البوت ليس مشرفاً)، سنسمح للمستخدم بالمرور لتجنب تعطيل البوت بالكامل
+        return True 
+
+    # إذا لم يكن مشتركاً، نرسل له رسالة الاشتراك
+    keyboard = [
+        [InlineKeyboardButton("📢 اشترك في القناة", url=f"https://t.me/{CHANNEL_USERNAME.replace('@', '')}")],
+        [InlineKeyboardButton("✅ تحقق من الاشتراك", callback_data="check_sub")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    msg = (
+        f"⚠️ <b>عذراً عزيزي،</b>\n\n"
+        f"لاستخدام البوت، يجب عليك الاشتراك في قناتنا أولاً.\n"
+        f"اضغط على الزر أدناه للاشتراك، ثم اضغط على زر 'تحقق من الاشتراك'."
+    )
+    
+    if update.callback_query:
+        await update.callback_query.message.edit_text(msg, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        await update.callback_query.answer()
+    else:
+        await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    
+    return False
+
+# ============================================================
+# 4. دوال مساعدة للتحميل
 # ============================================================
 def extract_domain(url: str):
     url = url.strip()
@@ -172,10 +210,23 @@ async def cleanup_file(path: Path):
     except Exception: pass
 
 # ============================================================
-# 4. معالجات البوت (الأوامر)
+# 5. معالجات البوت (الأوامر)
 # ============================================================
 
+async def check_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دالة مخصصة لزر 'تحقق من الاشتراك'"""
+    query = update.callback_query
+    await query.answer()
+    
+    is_subscribed = await check_subscription(update, context)
+    if is_subscribed:
+        await query.message.edit_text("✅ شكراً لاشتراكك! يمكنك الآن استخدام البوت بإرسال /start")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # التحقق من الاشتراك أولاً
+    if not await check_subscription(update, context):
+        return
+
     user_id = update.effective_user.id
     bot_username = context.bot.username
     
@@ -222,7 +273,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(welcome_text + warning_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 🔒 التحقق من أن المستخدم هو أحد المالكين
+    # التحقق من الاشتراك أولاً
+    if not await check_subscription(update, context):
+        return
+
     username = update.effective_user.username
     current_user = f"@{username}" if username else ""
     
@@ -231,7 +285,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     total_users, total_points = get_stats()
-    
     stats_text = (
         "📊 <b>إحصائيات البوت:</b>\n\n"
         f"👥 <b>إجمالي عدد المستخدمين:</b> {total_users} مستخدم\n"
@@ -240,6 +293,10 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(stats_text, parse_mode=ParseMode.HTML)
 
 async def points_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # التحقق من الاشتراك أولاً
+    if not await check_subscription(update, context):
+        return
+
     user_id = update.effective_user.id
     bot_username = context.bot.username
     user = get_user(user_id)
@@ -262,6 +319,10 @@ async def points_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # التحقق من الاشتراك أولاً
+    if not await check_subscription(update, context):
+        return
+
     user_id = update.effective_user.id
     if not context.args:
         await update.message.reply_text("❌ يرجى كتابة الكود بعد الأمر. مثال:\n<code>/redeem الكود_هنا</code>", parse_mode=ParseMode.HTML)
@@ -292,6 +353,10 @@ async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ تم شحن حسابك بنجاح!\n💰 حصلت على <b>{points_to_add}</b> نقطة.", parse_mode=ParseMode.HTML)
 
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # التحقق من الاشتراك أولاً
+    if not await check_subscription(update, context):
+        return
+
     text = (
         "🛒 <b>لشراء النقاط:</b>\n\n"
         "إذا كنت تريد شراء نقاط لتحميل المزيد من الفيديوهات، يرجى التواصل مع أحد المالكين:\n"
@@ -303,6 +368,10 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # التحقق من الاشتراك أولاً
+    if not await check_subscription(update, context):
+        return
+
     message = update.message
     user_id = message.from_user.id
     url = message.text.strip()
@@ -376,7 +445,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(msg="حدث استثناء:", exc_info=context.error)
 
 # ============================================================
-# 5. تشغيل البوت
+# 6. تشغيل البوت
 # ============================================================
 
 def main():
@@ -385,7 +454,6 @@ def main():
 
     init_db() 
 
-    # 🔥 إضافة قائمة الأوامر تلقائياً (أمر stats مخفي عن العامة لكي لا يراه أحد)
     async def post_init(application: Application) -> None:
         await application.bot.set_my_commands([
             BotCommand("start", "بدء استخدام البوت وعرض الرصيد"),
@@ -405,10 +473,14 @@ def main():
     )
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("stats", stats_command)) # 🔥 إضافة أمر الإحصائيات
+    application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("points", points_command))
     application.add_handler(CommandHandler("redeem", redeem_command))
     application.add_handler(CommandHandler("buy", buy_command))
+    
+    # معالج زر "تحقق من الاشتراك"
+    application.add_handler(CallbackQueryHandler(check_sub_callback, pattern="^check_sub$"))
+    
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     application.add_error_handler(error_handler)
 
