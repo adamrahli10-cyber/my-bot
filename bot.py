@@ -22,9 +22,9 @@ import yt_dlp
 # ============================================================
 
 # ⚠️ ضع التوكن الخاص بك هنا (أو اتركه يقرأ من البيئة)
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8914214210:AAFn_9caVKbHiQb9-AajsRf8NBVJADpLnHU")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8824872624:AAH5F6c9A0XIrCGzyLMT6wbfwOTDkM7arGc")
 
-# أسماء المالكين
+# أسماء المالكين (يجب أن تكون مطابقة لأسمائهم في تيليجرام بالضبط)
 OWNER_1 = "@RAHLI_1"
 OWNER_2 = "@TV_19_VPI"
 
@@ -82,10 +82,8 @@ logger = logging.getLogger(__name__)
 DB_PATH = "bot_data.db"
 
 def init_db():
-    """إنشاء جداول قاعدة البيانات إذا لم تكن موجودة"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    # جدول المستخدمين
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -93,7 +91,6 @@ def init_db():
             referred_by INTEGER DEFAULT NULL
         )
     """)
-    # جدول الأكواد المستخدمة (لضمان أن كل كود يُستخدم مرة واحدة فقط في العالم)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS used_codes (
             code TEXT PRIMARY KEY,
@@ -124,6 +121,17 @@ def update_points(user_id, amount):
     cursor.execute("UPDATE users SET points = points + ? WHERE user_id = ?", (amount, user_id))
     conn.commit()
     conn.close()
+
+# 🔥 دالة جديدة لجلب الإحصائيات
+def get_stats():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    cursor.execute("SELECT SUM(points) FROM users")
+    total_points = cursor.fetchone()[0] or 0
+    conn.close()
+    return total_users, total_points
 
 # ============================================================
 # 3. دوال مساعدة للتحميل والتحقق
@@ -213,6 +221,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     warning_text = WARNING_MESSAGE.format(owner1=OWNER_1, owner2=OWNER_2)
     await update.message.reply_text(welcome_text + warning_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 🔒 التحقق من أن المستخدم هو أحد المالكين
+    username = update.effective_user.username
+    current_user = f"@{username}" if username else ""
+    
+    if current_user not in [OWNER_1, OWNER_2]:
+        await update.message.reply_text("❌ عذراً، هذا الأمر مخصص للمالكين فقط.")
+        return
+
+    total_users, total_points = get_stats()
+    
+    stats_text = (
+        "📊 <b>إحصائيات البوت:</b>\n\n"
+        f"👥 <b>إجمالي عدد المستخدمين:</b> {total_users} مستخدم\n"
+        f"💰 <b>إجمالي النقاط في النظام:</b> {total_points} نقطة"
+    )
+    await update.message.reply_text(stats_text, parse_mode=ParseMode.HTML)
+
 async def points_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     bot_username = context.bot.username
@@ -250,7 +276,6 @@ async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # 🔥 البحث عن الكود بشكل عام (لضمان عدم استخدامه من أي شخص آخر)
     cursor.execute("SELECT * FROM used_codes WHERE code = ?", (code,))
     if cursor.fetchone():
         conn.close()
@@ -259,7 +284,6 @@ async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     points_to_add = PROMO_CODES[code]
     
-    # إضافة الكود إلى قائمة الأكواد المستخدمة نهائياً
     cursor.execute("INSERT INTO used_codes (code, user_id) VALUES (?, ?)", (code, user_id))
     conn.commit()
     conn.close()
@@ -361,7 +385,7 @@ def main():
 
     init_db() 
 
-    # 🔥 إضافة قائمة الأوامر تلقائياً
+    # 🔥 إضافة قائمة الأوامر تلقائياً (أمر stats مخفي عن العامة لكي لا يراه أحد)
     async def post_init(application: Application) -> None:
         await application.bot.set_my_commands([
             BotCommand("start", "بدء استخدام البوت وعرض الرصيد"),
@@ -376,11 +400,12 @@ def main():
         .read_timeout(300)
         .write_timeout(300)
         .connect_timeout(300)
-        .post_init(post_init) # تشغيل قائمة الأوامر
+        .post_init(post_init)
         .build()
     )
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("stats", stats_command)) # 🔥 إضافة أمر الإحصائيات
     application.add_handler(CommandHandler("points", points_command))
     application.add_handler(CommandHandler("redeem", redeem_command))
     application.add_handler(CommandHandler("buy", buy_command))
