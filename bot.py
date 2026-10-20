@@ -274,14 +274,19 @@ async def points_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎁 <b>لشحن النقاط:</b> <code>/redeem الكود</code>\n🛒 <b>للشراء:</b> /buy"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-
 async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_subscription(update, context): return
     user_id = update.effective_user.id
-    if not context.args:
-        return await update.message.reply_text("❌ يرجى كتابة الكود. مثال:\n<code>/redeem الكود_هنا</code>", parse_mode=ParseMode.HTML)
+    
+    # استخراج النص بعد كلمة redeem مباشرة وتجاهل أي مسافات زائدة
+    message_text = update.message.text
+    parts = message_text.split(maxsplit=1) 
+    
+    if len(parts) < 2:
+        return await update.message.reply_text("❌ يرجى كتابة الكود بعد الأمر. مثال:\n<code>/redeem الكود_هنا</code>", parse_mode=ParseMode.HTML)
         
-    code = context.args[0].strip().upper()
+    code = parts[1].strip().upper() # أخذ الكود وتحويله لحروف كبيرة
+    
     if code not in PROMO_CODES:
         return await update.message.reply_text("❌ هذا الكود غير صحيح.")
         
